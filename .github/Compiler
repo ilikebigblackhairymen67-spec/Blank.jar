@@ -1,0 +1,77 @@
+name: Compile ZIP -> JAR (Minecraft Forge 1.19.2)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: ZIP to Forge JAR Converter
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (required for Forge 1.19.2)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Convert ZIP to Forge JAR + Validation
+        run: |
+          mkdir -p out/jars out/errors
+          echo "🔍 Scanning for .zip mod files..."
+
+          success=0
+          failed=0
+
+          for zipfile in *.zip; do
+            if [ -f "$zipfile" ]; then
+              base="${zipfile%.zip}"
+              echo "📦 Processing: $zipfile → $base.jar"
+
+              # Extract and repackage as JAR
+              unzip -q "$zipfile" -d temp_extract || { echo "❌ Failed to unzip \( zipfile"; failed= \)((failed+1)); continue; }
+              
+              (cd temp_extract && jar cf "../out/jars/$base.jar" .) || { 
+                echo "❌ Failed to create JAR from $zipfile" 
+                failed=$((failed+1))
+                rm -rf temp_extract
+                continue
+              }
+              
+              rm -rf temp_extract
+
+              # Validate JAR
+              if jar tf "out/jars/$base.jar" > /dev/null 2>&1; then
+                echo "✅ Successfully created: $base.jar"
+                success=$((success+1))
+              else
+                echo "❌ Invalid JAR: $base.jar (moved to errors)"
+                mv "out/jars/$base.jar" out/errors/ 2>/dev/null || true
+                failed=$((failed+1))
+              fi
+            fi
+          done
+
+          echo "===================================="
+          echo "✅ Success: $success | ❌ Failed: $failed"
+          echo "📁 Output folder: out/jars"
+          ls -la out/jars || echo "No JARs generated"
+          
+          if [ $failed -gt 0 ]; then
+            echo "⚠️  Some files failed. Check 'out/errors' folder in artifacts."
+          fi
+
+      - name: Upload compiled JARs and errors
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-1.19.2-jars
+          path: |
+            out/jars
+            out/errors
